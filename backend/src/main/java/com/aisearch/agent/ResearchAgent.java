@@ -1,10 +1,8 @@
-
 package com.aisearch.agent;
 
 import com.aisearch.dto.AgentEvent;
 import com.aisearch.dto.SearchResult;
 import com.aisearch.search.TavilySearchProvider;
-import com.aisearch.web.WebPageReader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -20,10 +18,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Service
 public class ResearchAgent {
 
-    private static final Logger log = LoggerFactory.getLogger(ResearchAgent.class);
+    private static final Logger log =
+            LoggerFactory.getLogger(ResearchAgent.class);
 
     private final TavilySearchProvider searchProvider;
-    private final WebPageReader pageReader;
 
     private final int qFast, sFast, pFast;
     private final int qBal, sBal, pBal;
@@ -31,7 +29,6 @@ public class ResearchAgent {
 
     public ResearchAgent(
             TavilySearchProvider searchProvider,
-            WebPageReader pageReader,
             @Value("${aisearch.modes.fast.queries:1}") int qFast,
             @Value("${aisearch.modes.fast.sources:5}") int sFast,
             @Value("${aisearch.modes.fast.pages:3}") int pFast,
@@ -43,7 +40,6 @@ public class ResearchAgent {
             @Value("${aisearch.modes.deep.pages:8}") int pDeep) {
 
         this.searchProvider = searchProvider;
-        this.pageReader = pageReader;
 
         this.qFast = qFast;
         this.sFast = sFast;
@@ -70,6 +66,7 @@ public class ResearchAgent {
             try {
                 execute(query, mode, cancelled, sink);
             } catch (Exception e) {
+
                 log.error("Research failed", e);
 
                 emit(
@@ -81,6 +78,7 @@ public class ResearchAgent {
                                         : "Research failed"
                         )
                 );
+
             } finally {
                 sink.tryEmitComplete();
             }
@@ -96,6 +94,7 @@ public class ResearchAgent {
             Sinks.Many<AgentEvent> sink) {
 
         if (query == null || query.isBlank()) {
+
             emit(
                     sink,
                     AgentEvent.of(
@@ -144,7 +143,7 @@ public class ResearchAgent {
         }
 
         /*
-         * Step 1: Understand the question.
+         * Step 1: Understand question.
          */
         emit(
                 sink,
@@ -159,10 +158,11 @@ public class ResearchAgent {
         }
 
         /*
-         * Step 2: No OpenAI query planning.
+         * Step 2: Prepare search.
          *
-         * Tavily receives the original user query directly.
-         * This keeps the application completely free from OpenAI.
+         * No OpenAI.
+         * No LLM.
+         * Tavily receives the original query directly.
          */
         emit(
                 sink,
@@ -172,7 +172,8 @@ public class ResearchAgent {
                 )
         );
 
-        List<String> queries = List.of(query.trim());
+        List<String> queries =
+                List.of(query.trim());
 
         for (String q : queries) {
 
@@ -201,7 +202,8 @@ public class ResearchAgent {
                 )
         );
 
-        Map<String, SearchResult> unique = new LinkedHashMap<>();
+        Map<String, SearchResult> unique =
+                new LinkedHashMap<>();
 
         for (String q : queries) {
 
@@ -220,13 +222,17 @@ public class ResearchAgent {
 
                 for (SearchResult r : results) {
 
-                    if (r == null || r.getUrl() == null) {
+                    if (r == null ||
+                            r.getUrl() == null ||
+                            r.getUrl().isBlank()) {
                         continue;
                     }
 
-                    String key = normalize(r.getUrl());
+                    String key =
+                            normalize(r.getUrl());
 
-                    if (key != null && !unique.containsKey(key)) {
+                    if (key != null &&
+                            !unique.containsKey(key)) {
 
                         unique.put(key, r);
 
@@ -243,9 +249,15 @@ public class ResearchAgent {
                                                         180
                                                 )
                                         )
-                                        .faviconUrl(r.getFaviconUrl())
-                                        .sourceCount(unique.size())
-                                        .timestamp(Instant.now())
+                                        .faviconUrl(
+                                                r.getFaviconUrl()
+                                        )
+                                        .sourceCount(
+                                                unique.size()
+                                        )
+                                        .timestamp(
+                                                Instant.now()
+                                        )
                                         .build()
                         );
                     }
@@ -263,9 +275,11 @@ public class ResearchAgent {
                         AgentEvent.of(
                                 "STATUS",
                                 "Search issue: " +
-                                        (e.getMessage() != null
-                                                ? e.getMessage()
-                                                : "Unable to search")
+                                        (
+                                                e.getMessage() != null
+                                                        ? e.getMessage()
+                                                        : "Unable to search"
+                                        )
                         )
                 );
             }
@@ -306,14 +320,21 @@ public class ResearchAgent {
                 AgentEvent.of(
                         "STATUS",
                         ranked.size() +
-                                " sources found. Reading pages..."
+                                " sources found. Preparing results..."
                 )
         );
 
         /*
-         * Step 5: Read webpages using Jina.
+         * Step 5:
+         *
+         * IMPORTANT:
+         * Do NOT open the webpages again.
+         *
+         * Tavily already returned useful content.
+         * This prevents WebPageReader/Jina timeout problems.
          */
-        List<SearchResult> used = new ArrayList<>();
+        List<SearchResult> used =
+                new ArrayList<>();
 
         StringBuilder context =
                 new StringBuilder();
@@ -323,44 +344,15 @@ public class ResearchAgent {
 
         for (SearchResult r : ranked) {
 
-            if (cancelled.get() || pages >= maxP) {
+            if (cancelled.get() ||
+                    pages >= maxP) {
                 break;
             }
 
-            emit(
-                    sink,
-                    AgentEvent.builder()
-                            .type("READING")
-                            .title(r.getTitle())
-                            .url(r.getUrl())
-                            .domain(r.getDomain())
-                            .timestamp(Instant.now())
-                            .build()
-            );
-
-            String content = null;
-
-            try {
-                content = pageReader.read(r.getUrl());
-            } catch (Exception e) {
-                log.debug(
-                        "Could not read page {}: {}",
-                        r.getUrl(),
-                        e.getMessage()
-                );
-            }
-
-            /*
-             * If Jina cannot read the page,
-             * use Tavily's returned content.
-             */
-            if (content == null || content.length() < 80) {
-
-                content =
-                        r.getContent() != null
-                                ? r.getContent()
-                                : "";
-            }
+            String content =
+                    r.getContent() != null
+                            ? r.getContent()
+                            : "";
 
             if (content.length() > 50) {
 
@@ -384,6 +376,17 @@ public class ResearchAgent {
                                 )
                         )
                         .append("\n\n");
+
+                emit(
+                        sink,
+                        AgentEvent.builder()
+                                .type("READING")
+                                .title(r.getTitle())
+                                .url(r.getUrl())
+                                .domain(r.getDomain())
+                                .timestamp(Instant.now())
+                                .build()
+                );
 
                 idx++;
                 pages++;
@@ -428,11 +431,12 @@ public class ResearchAgent {
         }
 
         /*
-         * Step 7: Build a Tavily-only answer.
+         * Step 7:
          *
-         * There is NO OpenAI call here.
-         * The answer is created from the web-search results
-         * and page content.
+         * Tavily-only answer.
+         *
+         * No OpenAI.
+         * No LLM.
          */
         emit(
                 sink,
@@ -461,7 +465,9 @@ public class ResearchAgent {
                     !r.getTitle().isBlank()) {
 
                 answer.append(r.getTitle());
+
             } else {
+
                 answer.append("Untitled source");
             }
 
@@ -485,11 +491,12 @@ public class ResearchAgent {
                     .append("\n\n");
         }
 
-        /*
-         * Stream the answer to the existing frontend.
-         */
-        String finalAnswer = answer.toString();
+        String finalAnswer =
+                answer.toString();
 
+        /*
+         * Stream final answer to frontend.
+         */
         emit(
                 sink,
                 AgentEvent.builder()
@@ -507,12 +514,16 @@ public class ResearchAgent {
 
         for (int i = 0; i < used.size(); i++) {
 
-            SearchResult r = used.get(i);
+            SearchResult r =
+                    used.get(i);
 
             Map<String, Object> source =
                     new LinkedHashMap<>();
 
-            source.put("number", i + 1);
+            source.put(
+                    "number",
+                    i + 1
+            );
 
             source.put(
                     "title",
@@ -537,7 +548,7 @@ public class ResearchAgent {
         }
 
         /*
-         * Step 9: Send final DONE event.
+         * Step 9: Final DONE event.
          */
         emit(
                 sink,
@@ -566,7 +577,8 @@ public class ResearchAgent {
 
         try {
 
-            URI u = URI.create(url);
+            URI u =
+                    URI.create(url);
 
             String host =
                     u.getHost() != null
@@ -608,4 +620,3 @@ public class ResearchAgent {
                 : text.substring(0, max) + "...";
     }
 }
-
