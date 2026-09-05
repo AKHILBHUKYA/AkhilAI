@@ -1,0 +1,12 @@
+.env
+*.log
+node_modules/
+.next/
+target/
+.idea/
+*.iml
+.DS_Store
+dist/
+build/
+*.jar
+.vercel

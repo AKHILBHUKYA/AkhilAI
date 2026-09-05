@@ -1,0 +1,54 @@
+server:
+  port: ${PORT:8080}
+
+spring:
+  application:
+    name: ai-search
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    default-property-inclusion: non_null
+
+aisearch:
+  tavily:
+    api-key: ${TAVILY_API_KEY:}
+    base-url: https://api.tavily.com
+
+  jina:
+    base-url: https://r.jina.ai
+
+  cors:
+    allowed-origins: ${FRONTEND_URL:http://localhost:3000}
+
+  modes:
+    fast:
+      queries: 1
+      sources: 5
+      pages: 3
+    balanced:
+      queries: 2
+      sources: 8
+      pages: 5
+    deep:
+      queries: 4
+      sources: 12
+      pages: 8
+
+  limits:
+    max-page-size: 1500000
+    page-timeout-seconds: 15
+    search-timeout-seconds: 25
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+
+logging:
+  level:
+    com.aisearch: INFO
+    root: WARN
